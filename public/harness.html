@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KYC WebView harness</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; margin: 0; display: grid; grid-template-columns: minmax(320px, 420px) 1fr; height: 100vh; }
+      aside { padding: 16px; border-right: 1px solid color-mix(in oklab, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+      textarea { width: 100%; box-sizing: border-box; min-height: 190px; font-family: ui-monospace, monospace; font-size: 12px; padding: 8px; }
+      button { padding: 8px 12px; font: inherit; cursor: pointer; }
+      #log { flex: 1; overflow: auto; background: color-mix(in oklab, currentColor 6%, transparent); padding: 8px; font-family: ui-monospace, monospace; font-size: 11px; white-space: pre-wrap; word-break: break-word; margin: 0; }
+      iframe { border: 0; width: 100%; height: 100%; }
+      h1 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; opacity: .6; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <h1>Config JSON</h1>
+      <textarea id="cfg">
+{
+  "apiKey": "pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "workflowId": "wf_AbC123dEf456",
+  "userId": "user_42"
+}</textarea
+      >
+      <p style="margin: 0; opacity: 0.65; font-size: 12px">
+        Required: <code>apiKey</code>, <code>userId</code>, and
+        <code>workflowId</code> (or <code>country</code>).
+        <code>userData</code> and <code>metadata</code> are optional — add them
+        to prefill fields or tag the request.
+      </p>
+      <div style="display: flex; gap: 8px">
+        <button id="load">Load flow</button>
+        <button id="close">Send close</button>
+        <button id="clear">Clear log</button>
+      </div>
+      <h1>Messages to native</h1>
+      <pre id="log"></pre>
+    </aside>
+    <iframe id="frame" allow="camera; microphone; accelerometer; gyroscope"></iframe>
+
+    <script type="module">
+      const log = document.getElementById('log');
+      const frame = document.getElementById('frame');
+      const cfg = document.getElementById('cfg');
+
+      let loadCount = 0;
+
+      const write = (text) => {
+        log.textContent += text + '\n';
+        log.scrollTop = log.scrollHeight;
+      };
+
+      const encode = (obj) => {
+        const bytes = new TextEncoder().encode(JSON.stringify(obj));
+        const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      };
+
+      document.getElementById('load').onclick = () => {
+        let parsed;
+        try {
+          parsed = JSON.parse(cfg.value);
+        } catch (e) {
+          write('✗ config is not valid JSON: ' + e.message);
+          return;
+        }
+        // The counter keeps every load a genuinely new URL. Changing only the
+        // fragment does NOT reload an iframe (it just fires hashchange), so the
+        // page would otherwise keep its previously decoded config. The page
+        // reads the fragment and ignores the query, so `?r=` is inert.
+        // (A live WebView always loads fresh — this is a harness-only concern.)
+        const url = `${location.origin}/?r=${++loadCount}#${encode(parsed)}`;
+        write('→ loading ' + url.slice(0, 90) + '…');
+        frame.src = url;
+      };
+
+      document.getElementById('close').onclick = () => {
+        frame.contentWindow?.postMessage(JSON.stringify({ type: 'close' }), '*');
+        write('← sent { type: "close" } to the page');
+      };
+
+      document.getElementById('clear').onclick = () => (log.textContent = '');
+
+      // The page falls back to parent.postMessage when ReactNativeWebView is absent.
+      window.addEventListener('message', (event) => {
+        if (typeof event.data !== 'string') return;
+        try {
+          const parsed = JSON.parse(event.data);
+          if (parsed?.source === 'myaza-kyc') write('▲ ' + JSON.stringify(parsed, null, 2));
+        } catch {}
+      });
+    </script>
+  </body>
+</html>

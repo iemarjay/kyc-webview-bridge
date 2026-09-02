@@ -1,0 +1,19 @@
+/*
+ * The page is a transparent shell: the SDK renders a full-screen modal over it
+ * and the native host owns everything else. A background here would show as a
+ * flash before the modal paints.
+ */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+}
+
+body {
+  /* Kill the WebView tap-highlight and text selection so the flow feels native. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
+}
