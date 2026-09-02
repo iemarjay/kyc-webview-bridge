@@ -9,7 +9,7 @@ import { ActivityIndicator, Alert, PermissionsAndroid, Platform, StyleSheet, Vie
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 /** Where the built `dist/` is hosted. MUST be https — `getUserMedia` is blocked otherwise. */
-const KYC_PAGE_URL = 'https://bob-kyc.pages.dev';
+const KYC_PAGE_URL = 'https://kyc-webview-bridge.pages.dev';
 
 type KycEvent =
   | { source: 'myaza-kyc'; type: 'ready'; payload: { sdkVersion: string } }

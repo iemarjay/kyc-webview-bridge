@@ -210,26 +210,26 @@ npm run preview   # serve the production build locally
 
 ## Deployment
 
-Live on Cloudflare Pages: **<https://bob-kyc.pages.dev>**
+Live on Cloudflare Pages: **<https://kyc-webview-bridge.pages.dev>**
 
 ```bash
 npm run deploy
 ```
 
-That builds and pushes `dist/` to the `bob-kyc` Pages project. Cloudflare serves
+That builds and pushes `dist/` to the `kyc-webview-bridge` Pages project. Cloudflare serves
 it over HTTPS, which is the hard requirement for the camera steps.
 
 Two Pages behaviours worth knowing:
 
 - **`.html` is stripped.** `/harness.html` 308-redirects to `/harness`. The
   entry point `/` is unaffected, so the WebView URL is just
-  `https://bob-kyc.pages.dev/#<base64>`.
+  `https://kyc-webview-bridge.pages.dev/#<base64>`.
 - **`public/_headers`** ships `nosniff`, `Referrer-Policy: no-referrer` (belt
   and braces with the fragment-based config) and `X-Frame-Options: SAMEORIGIN`.
   A WebView loads the page top-level, so framing rules don't affect it.
 
 The dev harness is deployed too, at
-[`/harness`](https://bob-kyc.pages.dev/harness) — useful precisely because it
+[`/harness`](https://kyc-webview-bridge.pages.dev/harness) — useful precisely because it
 runs on a real HTTPS origin, which is the only place the camera steps work. It
 adds no attack surface (the fragment contract is public either way), but delete
 `public/harness.html` before a production launch if you'd rather it weren't
