@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MyazaKYC, type KYCError, type KYCStep, type KYCSubmission } from '@myazahq/kyc-sdk-react';
 import '@myazahq/kyc-sdk-react/styles.css';
 
-import { onHostCommand, postToNative } from './lib/bridge';
+import { closeSelfIfPopup, configureBridge, detectTransports, onHostCommand, postToHost } from './lib/bridge';
 import { decodePayload, PayloadError, type KycPayload } from './lib/payload';
 
 type DecodeState =
@@ -35,11 +35,16 @@ export default function App() {
     if (announcedRef.current) return;
     announcedRef.current = true;
 
+    // Pin the postMessage target before anything is sent. A failed decode has
+    // no `hostOrigin` to offer, so that path falls back to inference — its
+    // payload is a code and a message, never verification data.
+    configureBridge({ hostOrigin: decoded.status === 'ok' ? decoded.payload.hostOrigin : undefined });
+
     if (decoded.status === 'failed') {
-      postToNative({ type: 'error', payload: { code: decoded.code, message: decoded.message } });
+      postToHost({ type: 'error', payload: { code: decoded.code, message: decoded.message } });
       return;
     }
-    postToNative({ type: 'ready', payload: { sdkVersion: __SDK_VERSION__ } });
+    postToHost({ type: 'ready', payload: { sdkVersion: __SDK_VERSION__, transports: detectTransports() } });
   }, [decoded]);
 
   // Let the native side tear the flow down (hardware back button, app
@@ -53,15 +58,15 @@ export default function App() {
   );
 
   const handleStart = useCallback(() => {
-    postToNative({ type: 'start', payload: {} });
+    postToHost({ type: 'start', payload: {} });
   }, []);
 
   const handleStepChange = useCallback((step: KYCStep) => {
-    postToNative({ type: 'step', payload: { step } });
+    postToHost({ type: 'step', payload: { step } });
   }, []);
 
   const handleSubmit = useCallback((submission: KYCSubmission) => {
-    postToNative({
+    postToHost({
       type: 'submit',
       payload: {
         verificationId: submission.verificationId,
@@ -74,11 +79,14 @@ export default function App() {
 
   const handleClose = useCallback(() => {
     setDismissed(true);
-    postToNative({ type: 'close', payload: {} });
+    postToHost({ type: 'close', payload: {} });
+    // In a popup the host cannot close us across origins, so an unclosed window
+    // would just sit there empty. No-ops for WebView and iframe embeds.
+    closeSelfIfPopup();
   }, []);
 
   const handleError = useCallback((error: KYCError) => {
-    postToNative({
+    postToHost({
       type: 'error',
       payload: { code: error.code, message: error.message, details: error.details },
     });

@@ -19,6 +19,16 @@ export type KycPayload = Omit<
    * correlate against. Cheaper to reject here than to strand a result later.
    */
   userId: string;
+
+  /**
+   * Origin of the embedding web app, used as `postMessage`'s `targetOrigin`.
+   *
+   * Web embeds only — a React Native WebView ignores it. Without it the page
+   * infers the origin from `document.referrer` and otherwise falls back to
+   * `'*'`, which lets any window holding a handle to this page read the KYC
+   * events. Set it whenever you embed in a browser.
+   */
+  hostOrigin?: string;
 };
 
 export type PayloadErrorCode = 'missing' | 'malformed' | 'invalid';
@@ -103,6 +113,23 @@ export function decodePayload(url: string = window.location.href): KycPayload {
 
   if (typeof payload.userId !== 'string' || !payload.userId.trim()) {
     throw new PayloadError('`userId` is required so the verification can be tied back to your user record.', 'invalid');
+  }
+
+  if (payload.hostOrigin !== undefined) {
+    // A malformed origin would silently become a `postMessage` no-op, so the
+    // events would just vanish. Better to say so up front.
+    let parsed: URL;
+    try {
+      parsed = new URL(payload.hostOrigin);
+    } catch {
+      throw new PayloadError('`hostOrigin` must be an absolute origin, e.g. "https://app.example.com".', 'invalid');
+    }
+    if (parsed.origin !== payload.hostOrigin) {
+      throw new PayloadError(
+        `\`hostOrigin\` must be a bare origin with no path or trailing slash — did you mean "${parsed.origin}"?`,
+        'invalid',
+      );
+    }
   }
 
   // The SDK throws on this combination during render; catching it here turns a

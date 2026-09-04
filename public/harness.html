@@ -31,8 +31,9 @@
         <code>userData</code> and <code>metadata</code> are optional — add them
         to prefill fields or tag the request.
       </p>
-      <div style="display: flex; gap: 8px">
-        <button id="load">Load flow</button>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap">
+        <button id="load">Load in iframe</button>
+        <button id="popup">Open as popup</button>
         <button id="close">Send close</button>
         <button id="clear">Clear log</button>
       </div>
@@ -59,14 +60,18 @@
         return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       };
 
-      document.getElementById('load').onclick = () => {
-        let parsed;
+      const parseConfig = () => {
         try {
-          parsed = JSON.parse(cfg.value);
+          return JSON.parse(cfg.value);
         } catch (e) {
           write('✗ config is not valid JSON: ' + e.message);
-          return;
+          return null;
         }
+      };
+
+      document.getElementById('load').onclick = () => {
+        const parsed = parseConfig();
+        if (!parsed) return;
         // The counter keeps every load a genuinely new URL. Changing only the
         // fragment does NOT reload an iframe (it just fires hashchange), so the
         // page would otherwise keep its previously decoded config. The page
@@ -77,9 +82,23 @@
         frame.src = url;
       };
 
+      // Popup transport: the page reaches back via window.opener.
+      let popupWindow = null;
+      document.getElementById('popup').onclick = () => {
+        const parsed = parseConfig();
+        if (!parsed) return;
+        const url = `${location.origin}/?r=${++loadCount}#${encode(parsed)}`;
+        write('→ opening popup ' + url.slice(0, 80) + '…');
+        popupWindow = window.open(url, 'kyc', 'width=420,height=760');
+        if (!popupWindow) write('✗ popup blocked by the browser');
+      };
+
       document.getElementById('close').onclick = () => {
-        frame.contentWindow?.postMessage(JSON.stringify({ type: 'close' }), '*');
-        write('← sent { type: "close" } to the page');
+        const command = JSON.stringify({ type: 'close' });
+        // Same command shape for both transports.
+        frame.contentWindow?.postMessage(command, location.origin);
+        if (popupWindow && !popupWindow.closed) popupWindow.postMessage(command, location.origin);
+        write('← sent { type: "close" } to iframe' + (popupWindow && !popupWindow.closed ? ' + popup' : ''));
       };
 
       document.getElementById('clear').onclick = () => (log.textContent = '');
@@ -89,7 +108,9 @@
         if (typeof event.data !== 'string') return;
         try {
           const parsed = JSON.parse(event.data);
-          if (parsed?.source === 'myaza-kyc') write('▲ ' + JSON.stringify(parsed, null, 2));
+          if (parsed?.source !== 'myaza-kyc') return;
+          const via = event.source === frame.contentWindow ? 'iframe' : 'popup';
+          write('▲ [via ' + via + '] ' + JSON.stringify(parsed, null, 2));
         } catch {}
       });
     </script>

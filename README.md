@@ -1,9 +1,20 @@
 # kyc-webview-bridge
 
 A static React page that runs [`@myazahq/kyc-sdk-react`](https://www.npmjs.com/package/@myazahq/kyc-sdk-react)
-inside a React Native `WebView`. The native app passes runtime config as
-base64-encoded JSON in the URL fragment; the page reports every lifecycle event
-back through `postMessage`.
+inside someone else's app. The host passes runtime config as base64-encoded JSON
+in the URL fragment; the page reports every lifecycle event back through
+`postMessage`.
+
+Three hosts, detected at runtime and speaking one protocol:
+
+| Host | Transport | Host listens on |
+| ---- | --------- | --------------- |
+| React Native `WebView` | `window.ReactNativeWebView.postMessage` | `<WebView onMessage>` |
+| Web app, embedded | `window.parent.postMessage` | `window.addEventListener('message')` |
+| Web app, `window.open()` | `window.opener.postMessage` | `window.addEventListener('message')` |
+
+Events are JSON **strings** in all three cases (React Native's bridge only
+carries strings), so a single parser handles any embedding.
 
 Unofficial — not affiliated with Myaza.
 
@@ -53,6 +64,7 @@ The rest is optional and only worth sending when you have it:
 | ----------- | ----------------- |
 | `userData`  | Prefill — `firstName`, `lastName`, `dateOfBirth`. Fields provided here aren't collected again. Omit it and the applicant simply types them in. |
 | `metadata`  | `Record<string, string>` forwarded with every verify request and echoed back on `submit`. Handy for tying a verification to an order or request id. |
+| `hostOrigin`| **Web embeds only.** The origin of the embedding app, used as `postMessage`'s `targetOrigin`. See [Web apps](#web-apps). Ignored by a React Native WebView. |
 
 ### Building the URL in Node.js
 
@@ -112,16 +124,17 @@ there is no environment flag.
 A malformed or missing payload is reported as an `error` event and renders
 nothing, leaving the native app to own the failure UI.
 
-## Events sent to native
+## Events sent to the host
 
 Every message is a JSON **string** (RN's bridge stringifies objects to
 `"[object Object]"`, so the page serializes them itself). All carry
 `source: "myaza-kyc"` and an ISO `at` timestamp — filter on `source`, since
-other libraries post on the same channel.
+other libraries post on the same channel. The same events go to every host that
+is present, so a page that is both framed and script-opened reaches both.
 
 | `type`   | `payload`                                            | When |
 | -------- | ---------------------------------------------------- | ---- |
-| `ready`  | `{ sdkVersion }`                                     | Page mounted and config decoded. Fires once. |
+| `ready`  | `{ sdkVersion, transports }`                         | Page mounted and config decoded. Fires once. `transports` says which hosts it detected. |
 | `start`  | `{}`                                                 | Flow opened. |
 | `step`   | `{ step }`                                           | Each step transition (`consent`, `liveness`, `submitted`, …). |
 | `submit` | `{ verificationId, status, submittedAt, metadata }`  | Server accepted the submission. `status` is always `"pending"`. |
@@ -138,10 +151,19 @@ page's own decoding.
 review". Approval/rejection lands on your backend webhook — treat
 `verificationId` as the correlation key, never a pass.
 
-## Commands from native
+## Commands from the host
 
-Inject a JSON string to drive the page — used for the Android hardware back
-button or a session timeout:
+Send a JSON string to drive the page — used for the Android hardware back
+button, a session timeout, or a web host tearing the flow down.
+
+From a web app:
+
+```js
+iframe.contentWindow.postMessage(JSON.stringify({ type: 'close' }), KYC_ORIGIN);
+popup.postMessage(JSON.stringify({ type: 'close' }), KYC_ORIGIN);
+```
+
+From React Native:
 
 ```js
 webviewRef.current.injectJavaScript(
@@ -151,6 +173,70 @@ webviewRef.current.injectJavaScript(
 
 The page listens on both `window` and `document` because the two platforms
 deliver these differently.
+
+## Web apps
+
+See [`examples/web-embed.js`](examples/web-embed.js) for iframe and popup
+helpers. The page detects the host itself — you only build the URL and listen.
+
+```js
+const KYC_ORIGIN = 'https://kyc-webview-bridge.pages.dev';
+
+const config = {
+  apiKey: 'pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  workflowId: 'wf_AbC123dEf456',
+  userId: 'user_42',
+  hostOrigin: window.location.origin, // pins postMessage's targetOrigin
+};
+const url = `${KYC_ORIGIN}/#${base64UrlEncode(JSON.stringify(config))}`;
+
+// Iframe — needs `allow` or the camera steps fail.
+const iframe = document.createElement('iframe');
+iframe.src = url;
+iframe.allow = 'camera; microphone; accelerometer; gyroscope';
+document.body.appendChild(iframe);
+
+// Popup — must run inside a click handler or it is blocked.
+const popup = window.open(url, 'kyc', 'width=420,height=760');
+
+window.addEventListener('message', (event) => {
+  if (event.origin !== KYC_ORIGIN) return;          // reject other origins
+  if (event.source !== iframe.contentWindow) return; // and other windows
+  const message = JSON.parse(event.data);
+  if (message.source !== 'myaza-kyc') return;
+  // message.type: ready | start | step | submit | close | error
+});
+```
+
+**Check `event.origin` on the host side.** Without it any page can post a fake
+`submit` and convince your app a user is verified. The two guards above — origin
+and `event.source` — are the whole security model for the web transports.
+
+### `hostOrigin` and why it matters
+
+`postMessage` needs a `targetOrigin`. The page resolves it in this order:
+
+1. **`hostOrigin` from the config** — explicit, and the only reliable option.
+2. **The origin of `document.referrer`** — set by the embedder at navigation
+   time, so it survives this page's own `Referrer-Policy: no-referrer` (that
+   policy governs requests *we* originate, not the referrer we were handed).
+   Absent when the embedder suppresses referrers.
+3. **`'*'`**, with a console warning.
+
+`'*'` means any window holding a handle to this page can read the KYC events,
+which include the `verificationId`. Send `hostOrigin` from a web app. A React
+Native WebView doesn't need it — no other origin is involved.
+
+Inbound commands are checked the same way: with `hostOrigin` set, only that
+origin may send a `close`. Without it the page at least requires the sender to
+be its actual `parent` or `opener`.
+
+### Popups close themselves
+
+When the flow is dismissed in a popup, the page calls `window.close()` on
+itself — a cross-origin host can't close it, and an unclosed popup would sit
+there empty. It still posts `close` first, so the host hears about it either
+way. No effect on iframe or WebView embeds.
 
 ## React Native side
 
@@ -195,9 +281,17 @@ npm run dev
 ```
 
 Then open <http://localhost:5173/harness.html> — a harness that encodes a config,
-loads the page in an iframe, and logs the outgoing messages. Outside a WebView
-the bridge falls back to `parent.postMessage` and `console.info`, so the same
-build is testable without a device.
+loads the page as **either an iframe or a popup**, logs which transport each
+message arrived over, and can send `close` back. With no host at all the bridge
+falls back to `console.info`, so the same build is testable standalone.
+
+```bash
+npm test
+```
+
+covers the transport matrix and the origin-trust rules — the parts a browser
+can't easily exercise, since an in-page harness can't mock `window.opener` or
+forge a cross-origin `message`.
 
 To test on a physical phone, the dev server binds to the LAN
 (`http://<your-ip>:5173`). Note that camera steps still need HTTPS — use a
@@ -239,8 +333,10 @@ there.
 
 | Path                  | Purpose |
 | --------------------- | ------- |
-| `src/lib/payload.ts`  | Base64 → validated config, with UTF-8-safe decoding. |
-| `src/lib/bridge.ts`   | `postMessage` transport and the event/command types. |
-| `src/App.tsx`         | Decodes, mounts the SDK, maps callbacks onto the bridge. |
-| `public/harness.html` | Browser dev harness. |
-| `examples/`           | React Native reference screen. |
+| `src/lib/payload.ts`     | Base64 → validated config, with UTF-8-safe decoding. |
+| `src/lib/bridge.ts`      | Host detection, `postMessage` transports, event/command types. |
+| `src/App.tsx`            | Decodes, mounts the SDK, maps callbacks onto the bridge. |
+| `public/harness.html`    | Browser dev harness — iframe and popup. |
+| `examples/KycScreen.tsx` | React Native reference screen. |
+| `examples/web-embed.js`  | Web iframe / popup helpers. |
+| `test/bridge.test.ts`    | Transport matrix and origin-trust tests (`npm test`). |
