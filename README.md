@@ -137,7 +137,8 @@ is present, so a page that is both framed and script-opened reaches both.
 | `ready`  | `{ sdkVersion, transports }`                         | Page mounted and config decoded. Fires once. `transports` says which hosts it detected. |
 | `start`  | `{}`                                                 | Flow opened. |
 | `step`   | `{ step }`                                           | Each step transition (`consent`, `liveness`, `submitted`, …). |
-| `submit` | `{ verificationId, status, submittedAt, metadata }`  | Server accepted the submission. `status` is always `"pending"`. |
+| `submit` | `{ verificationId, status, submittedAt, metadata }`  | Server accepted the submission for review. |
+| `result` | `{ verificationId, status, reason, reasonCode }`     | The in-app verdict. **Only fires on a biometric re-authentication** — see below. |
 | `close`  | `{}`                                                 | User dismissed the flow. |
 | `error`  | `{ code, message, details? }`                        | Technical errors only — see codes below. |
 
@@ -147,9 +148,18 @@ is present, so a page that is both framed and script-opened reaches both.
 — plus `payload_missing` / `payload_malformed` / `payload_invalid` from this
 page's own decoding.
 
-**A verification outcome never arrives here.** `submit` means "accepted for
-review". Approval/rejection lands on your backend webhook — treat
-`verificationId` as the correlation key, never a pass.
+**`submit` is not an approval.** It means "accepted for review" — treat
+`verificationId` as a correlation key, never a pass.
+
+SDK 3.x added `result`, which does carry a verdict (`approved`, `declined`,
+`in_review`, `awaiting_resubmission`, …) — but it fires only when the flow
+actually waits for one in-app, which is a biometric **re-authentication** on
+`resultDelivery: 'both'` (the default) or `'app'`. A standard onboarding flow
+never fires it, and neither does a wait that times out.
+
+So the rule is unchanged for normal KYC: **the backend webhook is the record of
+truth.** Treat `result` as a latency optimisation for re-auth flows, never as
+the thing you gate access on.
 
 ## Commands from the host
 
@@ -237,6 +247,23 @@ When the flow is dismissed in a popup, the page calls `window.close()` on
 itself — a cross-origin host can't close it, and an unclosed popup would sit
 there empty. It still posts `close` first, so the host hears about it either
 way. No effect on iframe or WebView embeds.
+
+## A note on the native React Native SDK
+
+Myaza also publishes
+[`@myazahq/kyc-sdk-react-native`](https://www.npmjs.com/package/@myazahq/kyc-sdk-react-native),
+a native Expo SDK. If you are building a React Native app, evaluate it before
+reaching for this WebView page — native camera handling beats a WebView for the
+liveness and document-capture steps.
+
+The trade-off is its dependency surface: Expo ≥ 56, React Native ≥ 0.83, and
+peer deps including `react-native-vision-camera-worklets`, `react-native-nitro-modules`
+and `react-native-worklets`. That means a config plugin and a prebuild — it is
+not a drop-in for a bare or older RN app, and not usable at all from Expo Go.
+
+This page remains the better fit when you want one implementation serving a
+WebView *and* the web, cannot take native dependencies, or want to ship KYC
+changes without an app-store release.
 
 ## React Native side
 

@@ -22,6 +22,7 @@ export type KycEvent =
   | { type: 'start'; payload: Record<string, never> }
   | { type: 'step'; payload: { step: string } }
   | { type: 'submit'; payload: { verificationId: string; status: string; submittedAt: string; metadata: Record<string, string> } }
+  | { type: 'result'; payload: { verificationId: string; status: string; reason: string | null; reasonCode: string | null } }
   | { type: 'close'; payload: Record<string, never> }
   | { type: 'error'; payload: { code: string; message: string; details?: unknown } };
 

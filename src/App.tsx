@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MyazaKYC, type KYCError, type KYCStep, type KYCSubmission } from '@myazahq/kyc-sdk-react';
+import { MyazaKYC, type KYCError, type KYCResult, type KYCStep, type KYCSubmission } from '@myazahq/kyc-sdk-react';
 import '@myazahq/kyc-sdk-react/styles.css';
 
 import { closeSelfIfPopup, configureBridge, detectTransports, onHostCommand, postToHost } from './lib/bridge';
@@ -77,6 +77,26 @@ export default function App() {
     });
   }, []);
 
+  /**
+   * The in-app verdict, added in SDK 3.x.
+   *
+   * Only fires when the flow actually waits for it — a biometric
+   * re-authentication on `resultDelivery: 'both'` (the default) or `'app'`. A
+   * standard onboarding flow never fires it, and neither does a wait that timed
+   * out, so the webhook remains the record of truth in every case.
+   */
+  const handleResult = useCallback((result: KYCResult) => {
+    postToHost({
+      type: 'result',
+      payload: {
+        verificationId: result.verificationId,
+        status: result.status,
+        reason: result.reason,
+        reasonCode: result.reasonCode,
+      },
+    });
+  }, []);
+
   const handleClose = useCallback(() => {
     setDismissed(true);
     postToHost({ type: 'close', payload: {} });
@@ -114,6 +134,7 @@ export default function App() {
       onStart={handleStart}
       onStepChange={handleStepChange}
       onSubmit={handleSubmit}
+      onResult={handleResult}
       onClose={handleClose}
       onError={handleError}
     />
